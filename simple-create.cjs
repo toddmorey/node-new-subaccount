@@ -1,3 +1,6 @@
+// Example of creating sub account from:
+// https://github.com/near/near-api-js/blob/master/packages/cookbook/accounts/create-testnet-account.js
+
 const HELP = `Please run this script in the following format:
 
     node create-testnet-account.js CREATOR_ACCOUNT.testnet NEW_ACCOUNT.testnet AMOUNT
