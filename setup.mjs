@@ -19,71 +19,71 @@ const homedirPath = homedir();
 const credentialsPath = path.join(homedirPath, CREDENTIALS_DIR);
 const keyStore = new keyStores.UnencryptedFileSystemKeyStore(credentialsPath);
 
-const config = {
-  keyStore,
-  networkId: 'testnet',
-  nodeUrl: 'https://rpc.testnet.near.org',
-};
-
 if (process.argv.length !== 5) {
   console.info(HELP);
   process.exit(1);
 }
 
-const newSubAccountCrendentials = await createSubAccount(process.argv[2], process.argv[3], process.argv[4]);
-await exportCredentials(newSubAccountCrendentials);
-// await registerNode(process.argv[2], process.argv[3], newSubAccountCrendentials.public_key);
+const masterAccount = process.argv[2];
+const subAccount = process.argv[3];
+const initialDeposit = process.argv[4] || '50'; // in NEAR tokens
 
+const config = {
+  keyStore,
+  networkId: 'testnet',
+  nodeUrl: 'https://rpc.testnet.near.org',
+  walletUrl: 'https://wallet.testnet.near.org',
+  helperUrl: 'https://helper.testnet.near.org',
+  explorerUrl: 'https://explorer.testnet.near.org',
+  masterAccount: 'toddmorey.testnet',
+};
+
+const newSubAccountCrendentials = await createSubAccount(masterAccount, subAccount, initialDeposit);
+await exportCredentials(newSubAccountCrendentials);
+// await registerNode(masterAccount, subAccount, newSubAccountCrendentials.public_key);
 await displayDockerInstructions({
-  node: process.argv[3],
+  node: subAccount,
   port: '6363',
   path: '/mnt/sdb1',
   device: '/dev/device',
 });
 
-console.log(process.argv[3]);
+async function createSubAccount(creatorAccountId, newAccountId, initialDeposit) {
+  const initialBalance = utils.format.parseNearAmount(initialDeposit);
+  const near = await connect({ ...config, initialBalance, keyStore });
 
-async function createSubAccount(creatorAccountId, newAccountId, amount) {
-  const near = await connect({ ...config, keyStore });
-  const creatorAccount = await near.account(creatorAccountId);
   const keyPair = KeyPair.fromRandom('ed25519');
-
   const publicKey = keyPair.getPublicKey().toString();
   const secretKey = keyPair.toString();
 
   console.log(`Creating sub account ${newAccountId}... `);
   console.log('--------------');
   console.log('creator: ', creatorAccountId);
-  console.log('amount: ', amount);
+  console.log('initial deposit: ', initialDeposit);
   console.log('public key: ', publicKey);
   console.log('--------------');
 
-  // store keypair to local machine's UnencryptedFileSystemKeyStore
-  console.log('saving credentials to the local keystore... ');
+  if (keyPair) {
+    // store keypair to local machine's UnencryptedFileSystemKeyStore
+    console.log('saving credentials to the local keystore... ');
+    await keyStore.setKey(config.networkId, newAccountId, keyPair);
+  }
 
-  await keyStore.setKey(config.networkId, newAccountId, keyPair);
-
-  const outcome = await creatorAccount.functionCall({
-    contractId: 'testnet',
-    methodName: 'create_account',
-    args: {
-      new_account_id: newAccountId,
-      new_public_key: publicKey,
-    },
-    gas: '300000000000000',
-    attachedDeposit: utils.format.parseNearAmount(amount),
-  });
-
-  console.log(outcome);
-
-  // Check the status
-  if (outcome.status.SuccessValue) {
-    console.log('Account creation successful');
-  } else {
-    console.log('Account creation failed');
-    if (newSubAccount.status.Failure) {
-      console.log('Failure details:', newSubAccount.status.Failure);
+  // Create account
+  try {
+    console.log(`Asking Near to create ${newAccountId}...`);
+    const response = await near.createAccount(newAccountId, publicKey);
+    console.log(`Account ${newAccountId} was created.`);
+  } catch (error) {
+    if (error.type === 'RetriesExceeded') {
+      console.warn('Received a timeout when creating account, please run:');
+      console.warn(`near state ${newAccountId}`);
+      console.warn('to confirm creation. Keyfile for this account has been saved.');
+    } else {
+      await near.connection.signer.keyStore.removeKey(config.networkId, newAccountId);
+      throw error;
     }
+    process.exit(1);
   }
 
   const credentials = {
@@ -102,8 +102,6 @@ async function exportCredentials(credentials) {
   fs.writeFile(filePath, jsonData, 'utf8', (err) => {
     if (err) {
       console.error('An error occurred while writing the file:', err);
-    } else {
-      console.log('config exported successfully!');
     }
   });
 }
@@ -130,7 +128,7 @@ async function displayDockerInstructions(params) {
   const searchParams = new URLSearchParams(params);
 
   // Start the server
-  const server = spawn('http-server', ['./instructions'], { stdio: 'inherit' });
+  const server = spawn('http-server', ['./instructions', '-s'], { stdio: 'inherit' });
   // Open the URL in the default browser
   open('http://localhost:8080/?' + searchParams).then(() => {
     console.log('Displaying instructions in the browser...');
